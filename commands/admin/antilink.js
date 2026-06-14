@@ -12,7 +12,7 @@ module.exports = {
   usage: '.antilink <on/off/set/get>',
   groupOnly: true,
   adminOnly: true,
-  botAdminNeeded: true,
+  botAdminNeeded: false,
   
   async execute(sock, msg, args, extra) {
     try {
