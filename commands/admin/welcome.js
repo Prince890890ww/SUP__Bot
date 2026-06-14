@@ -11,8 +11,8 @@ module.exports = {
   desc: 'Enable/disable welcome messages',
   usage: 'welcome on/off',
   groupOnly: true,
-  adminOnly: true,
-  botAdminNeeded: true,
+  adminOnly: false,
+  botAdminNeeded: false,
   execute: async (sock, msg, args) => {
     try {
       const groupId = msg.key.remoteJid;
