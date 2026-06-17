@@ -1,9 +1,19 @@
 const fs = require('fs');
 const path = require('path');
 
-const configFile = './data/autoDaily.json';
+const configFile = path.join(__dirname, '../../data/autoDaily.json');
+
+// Ensure data directory exists
+function ensureDataDir() {
+    const dir = path.dirname(configFile);
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+        console.log('📁 Created data directory');
+    }
+}
 
 function getConfig() {
+    ensureDataDir();
     if (!fs.existsSync(configFile)) {
         fs.writeFileSync(configFile, JSON.stringify({ enabled: false, lastSent: {} }));
         return { enabled: false, lastSent: {} };
@@ -16,6 +26,7 @@ function getConfig() {
 }
 
 function saveConfig(data) {
+    ensureDataDir();
     fs.writeFileSync(configFile, JSON.stringify(data, null, 2));
 }
 
@@ -81,7 +92,7 @@ const funnyMessages = [
 ];
 
 // ============================================
-// 🌅 MORNING MESSAGES (no start emoji)
+// 🌅 MORNING MESSAGES
 // ============================================
 const morningMessages = [
     "Uth gaye? Main toh soch rahi thi ki aaj subah kaun utha hai, lagta hai sab neend mein hain 😊",
@@ -97,7 +108,7 @@ const morningMessages = [
 ];
 
 // ============================================
-// 🍽️ LUNCH MESSAGES (no start emoji)
+// 🍽️ LUNCH MESSAGES
 // ============================================
 const lunchMessages = [
     "Lunch time! Mujhe toh khana bahut pasand hai, tum log kya kha rahe ho",
@@ -113,7 +124,7 @@ const lunchMessages = [
 ];
 
 // ============================================
-// ☕ EVENING MESSAGES (no start emoji)
+// ☕ EVENING MESSAGES
 // ============================================
 const eveningMessages = [
     "Shaam ho gayi, main soch rahi hu ki chai piyun, tum log kya kar rahe ho",
@@ -129,7 +140,7 @@ const eveningMessages = [
 ];
 
 // ============================================
-// 🍛 DINNER MESSAGES (no start emoji)
+// 🍛 DINNER MESSAGES
 // ============================================
 const dinnerMessages = [
     "Dinner time! Mera pet bol raha hai ki kuch khao, tum log bhi khao",
@@ -145,7 +156,7 @@ const dinnerMessages = [
 ];
 
 // ============================================
-// 🌙 GOOD NIGHT MESSAGES (no start emoji)
+// 🌙 GOOD NIGHT MESSAGES
 // ============================================
 const nightMessages = [
     "Raat ho gayi, main soch rahi hu ki so jaun, but group mein baat karna hai abhi",
@@ -161,7 +172,7 @@ const nightMessages = [
 ];
 
 // ============================================
-// 🧠 Scheduler Logic (same as before, uses updated arrays)
+// 🧠 Scheduler Logic
 // ============================================
 const funnyCooldown = new Map();
 
@@ -232,6 +243,7 @@ module.exports.startAutoDaily = function(sock) {
         }
     }
 
+    // 1. Fixed slots (every minute check)
     setInterval(async () => {
         const configNow = getConfig();
         if (!configNow.enabled) return;
@@ -253,6 +265,7 @@ module.exports.startAutoDaily = function(sock) {
         }
     }, 60000);
 
+    // 2. Random funny (every 10 minutes)
     setInterval(async () => {
         const configNow = getConfig();
         if (!configNow.enabled) return;
@@ -260,6 +273,4 @@ module.exports.startAutoDaily = function(sock) {
     }, 600000);
 
     console.log('🕐 Auto Daily Scheduler started with girl-style messages!');
-    console.log('   - Fixed slots: Morning, Lunch, Evening, Dinner, Night');
-    console.log('   - Random funny messages: Every 10 min (20% chance, 2hr cooldown/group)');
 };
