@@ -71,6 +71,9 @@ const os = require('os');
 // ✅ ADD THIS: Import groupstatus button and text reply handlers
 const { handleGroupStatusButton, handleGroupStatusTextReply } = require('./commands/admin/groupstatus');
 
+// ✅ ADD THIS: Import auto daily scheduler
+const { startAutoDaily } = require('./commands/owner/autodaily');
+
 // Remove Puppeteer cache (if some dependency downloaded Chromium into ~/.cache/puppeteer)
 function cleanupPuppeteerCache() {
   try {
@@ -314,6 +317,9 @@ async function startBot() {
 
       // Initialize anti-call feature
       handler.initializeAntiCall(sock);
+
+      // ✅ START AUTO DAILY SCHEDULER
+      startAutoDaily(sock);
 
       // Cleanup old chats (keep only active ones, e.g., last touched <1 day)
       const now = Date.now();
