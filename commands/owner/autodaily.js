@@ -3,22 +3,38 @@ const path = require('path');
 
 const configFile = path.join(__dirname, '../../data/autoDaily.json');
 
-function getConfig() {
+function ensureConfigFile() {
+    const dir = path.dirname(configFile);
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+        console.log('📁 Created data directory');
+    }
     if (!fs.existsSync(configFile)) {
         fs.writeFileSync(configFile, JSON.stringify({ enabled: false, lastSent: {} }, null, 2));
-        return { enabled: false, lastSent: {} };
+        console.log('📄 Created autoDaily.json');
     }
+}
+
+function getConfig() {
+    ensureConfigFile();
     try {
         return JSON.parse(fs.readFileSync(configFile, 'utf8'));
-    } catch {
-        return { enabled: false, lastSent: {} };
+    } catch (e) {
+        console.error('⚠️ Config read error, resetting:', e.message);
+        const defaultConfig = { enabled: false, lastSent: {} };
+        fs.writeFileSync(configFile, JSON.stringify(defaultConfig, null, 2));
+        return defaultConfig;
     }
 }
 
 function saveConfig(data) {
+    ensureConfigFile();
     fs.writeFileSync(configFile, JSON.stringify(data, null, 2));
 }
 
+// ============================================
+// 📋 MESSAGE LISTS
+// ============================================
 const morningMsgs = [
     "Uth gaye? Main toh soch rahi thi ki aaj subah kaun utha hai 😊",
     "Good morning! Aaj main fresh feel kar rahi hu",
@@ -26,7 +42,9 @@ const morningMsgs = [
     "Subah ho gayi, utho utho! Aaj ka din tumhara hai",
     "Main aaj subah bahut excited hu, pata nahi kyun",
     "Utho ji utho! Suraj nikla hai, aapko dekhne ke liye 🌅",
-    "Aaj ki shuruaat mast karo, positivity lekar aao"
+    "Aaj ki shuruaat mast karo, positivity lekar aao",
+    "Subah ki pehli smile tum sab ko dedi, ab tum log bhi smile karo",
+    "Mera aaj ka plan: fresh hona, chai pi na, aur group mein active rehna"
 ];
 
 const lunchMsgs = [
@@ -36,7 +54,9 @@ const lunchMsgs = [
     "Lunch break! Meri favourite activity hai ye",
     "Khana khao yaar, phir energy aaegi",
     "🍽️ Khana khao, pet bharo, phir group mein active ho jao",
-    "Bhook lagi? Khana khao, lunch break lo!"
+    "Bhook lagi? Khana khao, lunch break lo!",
+    "Dopahar mein khana khao, main tum sab ka wait kar rahi hu",
+    "Main soch rahi hu ki aaj kuch healthy khaun, but pizza dekh ke mann badal gaya"
 ];
 
 const eveningMsgs = [
@@ -46,7 +66,9 @@ const eveningMsgs = [
     "Aaj ki shaam bahut special hai, main bas group mein baat karna chahti hu",
     "Mera aaj ka kaam ho gaya, ab main bas group mein time spend karungi",
     "☕ Chai ki chuski aur friends ke sath group chat. Kya baat!",
-    "Shaam ki masti, chai aur group chat. Best combo!"
+    "Shaam ki masti, chai aur group chat. Best combo!",
+    "Evening mein main active hu, agar kisi ko kuch chahiye toh batao",
+    "Main soch rahi hu ki aaj kuch funny karein, thoda entertainment ho jaye"
 ];
 
 const dinnerMsgs = [
@@ -56,7 +78,9 @@ const dinnerMsgs = [
     "Dinner karke aao, phir group mein active ho jao",
     "Mera dinner ho gaya, ab main group mein time spend karungi",
     "🍛 Dinner ki plate aur group mein active rehna. Dono sath mein!",
-    "Khana khao, pet bharo, aur phir raat bhar group mein gaadi chalao 😄"
+    "Khana khao, pet bharo, aur phir raat bhar group mein gaadi chalao 😄",
+    "Main toh dinner kar liya, ab main group mein active hu",
+    "Raat ka khana khao, phir aaram karo, main bhi same kar rahi hu"
 ];
 
 const nightMsgs = [
@@ -66,7 +90,9 @@ const nightMsgs = [
     "Raat ke time main thoda emotional ho jaati hu",
     "Good night! Sapno mein milte hain 😴",
     "🌙 So jao ab, kal bahut kaam hai. Sweet dreams!",
-    "GN! Aaj ka din shandar tha, kal aur shandar hoga"
+    "GN! Aaj ka din shandar tha, kal aur shandar hoga",
+    "Raat ho gayi, so jao, main bhi so rahi hu, kal baat karenge",
+    "Mujhe neend aa rahi hai, lekin group mein baat karna hai, kya karun 😂"
 ];
 
 const funnyMsgs = [
@@ -93,14 +119,21 @@ const funnyMsgs = [
     "Group mein itna silent kyun hai? Koi toh gossip karo, main ready hu",
     "Aaj main thoda moody hu, mujhe ignore mat karna warna main naraaz ho jaungi",
     "Mera aaj ka goal: group mein sab ko hasaana, but mein khud has rahi hu 😂",
-    "😆 Kya haal hai sabke? Group mein toh masti chal rahi hai!"
+    "😆 Kya haal hai sabke? Group mein toh masti chal rahi hai!",
+    "🤣 Aaj koi funny joke sunao, bore ho raha hu.",
+    "😜 Group mein itna silent kyu hai? Koi toh boloo!",
+    "😂 Kya koi active hai? Thoda reply karo, warna main so jaunga.",
+    "🤪 Mera dimaag kharab ho gaya hai aaj, kaam ka kuch mann nahi!"
 ];
 
+// ============================================
+// 📋 COMMAND
+// ============================================
 module.exports = {
     name: 'autodaily',
     aliases: ['ad'],
     category: 'owner',
-    desc: 'Enable/disable auto daily messages',
+    desc: 'Enable/disable auto daily messages (GM, lunch, GN, funny every 35 min)',
     usage: 'autodaily on/off',
     ownerOnly: true,
     async execute(sock, msg, args, extra) {
@@ -108,29 +141,56 @@ module.exports = {
         const config = getConfig();
 
         if (!action) {
-            return extra.reply(`Status: ${config.enabled ? 'ON' : 'OFF'}`);
+            return extra.reply(`📌 *Auto Daily*\nStatus: ${config.enabled ? '✅ ON' : '❌ OFF'}`);
         }
 
         if (action === 'on') {
             config.enabled = true;
             saveConfig(config);
+            // Send test message to one random group
+            let testSent = '⚠️ No group found';
+            try {
+                const groups = await sock.groupFetchAllParticipating();
+                const list = Object.values(groups);
+                if (list.length > 0) {
+                    const rand = list[Math.floor(Math.random() * list.length)];
+                    await sock.sendMessage(rand.id, {
+                        text: `🧪 *Auto Daily Active* ✅\n\nBot ab active hai!\n\n📅 Messages aayenge:\n🌅 7 AM - Morning\n🍽️ 12 PM - Lunch\n☕ 4 PM - Evening\n🍛 8 PM - Dinner\n🌙 11 PM - Good Night\n\n😂 Funny messages har 35 minute mein *har group mein* aayenge!`
+                    });
+                    testSent = `✅ Test message sent to *${rand.subject}*`;
+                }
+            } catch (e) {
+                testSent = '⚠️ Could not send test message';
+            }
+            // Start scheduler
             startScheduler(sock);
-            return extra.reply('Auto daily enabled. Test message coming...');
+            return extra.reply(`✅ Auto daily enabled.\n${testSent}`);
         }
 
         if (action === 'off') {
             config.enabled = false;
             saveConfig(config);
-            return extra.reply('Auto daily disabled.');
+            return extra.reply('❌ Auto daily disabled.');
         }
 
         return extra.reply('Usage: .autodaily on / off');
     }
 };
 
+// ============================================
+// 🕐 SCHEDULER
+// ============================================
+let schedulerStarted = false;
+
 function startScheduler(sock) {
-    console.log('AutoDaily scheduler started');
-    
+    if (schedulerStarted) {
+        console.log('⏳ Scheduler already running');
+        return;
+    }
+    schedulerStarted = true;
+    console.log('🚀 AutoDaily scheduler started (funny every 35 min)');
+
+    // 1. Fixed slots (check every minute)
     setInterval(async () => {
         const config = getConfig();
         if (!config.enabled) return;
@@ -159,18 +219,18 @@ function startScheduler(sock) {
 
                 const msg = msgs[Math.floor(Math.random() * msgs.length)];
                 await sock.sendMessage(g.id, { text: msg });
-                console.log('Sent ' + slot + ' to ' + g.subject);
-                
+                console.log('✅ ' + slot + ' sent to ' + g.subject);
                 config.lastSent = config.lastSent || {};
                 config.lastSent[key] = true;
                 saveConfig(config);
                 await new Promise(r => setTimeout(r, 2000));
             }
         } catch (e) {
-            console.log('Scheduler error:', e.message);
+            console.log('❌ Scheduler error:', e.message);
         }
     }, 60000);
 
+    // 2. Funny messages – EVERY 35 MINUTES, ALL GROUPS
     setInterval(async () => {
         const config = getConfig();
         if (!config.enabled) return;
@@ -183,11 +243,16 @@ function startScheduler(sock) {
             for (const g of list) {
                 const msg = funnyMsgs[Math.floor(Math.random() * funnyMsgs.length)];
                 await sock.sendMessage(g.id, { text: msg });
-                console.log('Funny sent to ' + g.subject);
+                console.log('😂 Funny sent to ' + g.subject);
                 await new Promise(r => setTimeout(r, 1500));
             }
         } catch (e) {
-            console.log('Funny error:', e.message);
+            console.log('❌ Funny error:', e.message);
         }
-    }, 40 * 60 * 1000);
+    }, 35 * 60 * 1000); // ✅ 35 minutes
+
+    console.log('✅ Scheduler started successfully');
 }
+
+// ✅ EXPORT scheduler function
+module.exports.startAutoDaily = startScheduler;
