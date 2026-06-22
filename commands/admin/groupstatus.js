@@ -162,7 +162,7 @@ async function sendGroupList(sock, chatId, userId) {
 
     const session = sessions.get(userId);
     if (session) {
-      // Clear any old timeout
+      // Clear old timeout if any
       if (session.timeoutId) clearTimeout(session.timeoutId);
       session.page = 0;
       session.totalPages = totalPages;
@@ -195,12 +195,11 @@ async function sendPage(sock, chatId, userId, pageNum) {
   const end = Math.min(start + perPage, groupList.length);
   const pageGroups = groupList.slice(start, end);
 
-  // Build numbered list for text reply
+  // Build numbered list for text reply (including 0 for ALL)
   let numberedList = '\n📋 *Group List (reply with number):*\n\n';
   groupList.forEach((g, i) => {
     numberedList += `  ${i+1}. ${g.subject || 'Unnamed'}\n`;
   });
-  // ✅ ADD "ALL" OPTION AT THE END
   numberedList += `\n  *0. ALL GROUPS (post to all)* 🚀`;
 
   const buttons = [];
@@ -237,7 +236,7 @@ async function sendPage(sock, chatId, userId, pageNum) {
 }
 
 // ============================================
-// 🔘 Handle Button Clicks
+// 🔘 Handle Button Clicks (with ALL support)
 // ============================================
 async function handleGroupStatusButton(sock, msg) {
   const buttonMsg = msg.message?.buttonsResponseMessage;
@@ -261,7 +260,7 @@ async function handleGroupStatusButton(sock, msg) {
 
   // ✅ ALL GROUPS BUTTON
   if (buttonId === 'gstatus_all') {
-    // 🔥 FIX: Extend session timeout to 30 minutes for ALL operation
+    // Extend session timeout to 30 minutes for ALL operation
     if (session.timeoutId) clearTimeout(session.timeoutId);
     session.timeoutId = setTimeout(() => {
       if (sessions.has(sender)) {
@@ -295,7 +294,7 @@ async function handleGroupStatusButton(sock, msg) {
 }
 
 // ============================================
-// 🔢 Handle Text Number Replies
+// 🔢 Handle Text Number Replies (with ALL support)
 // ============================================
 async function handleGroupStatusTextReply(sock, msg) {
   const from = msg.key.remoteJid;
@@ -314,7 +313,7 @@ async function handleGroupStatusTextReply(sock, msg) {
 
   // ✅ ALL GROUPS (number 0)
   if (num === 0) {
-    // 🔥 FIX: Extend session timeout to 30 minutes for ALL operation
+    // Extend session timeout to 30 minutes for ALL operation
     if (session.timeoutId) clearTimeout(session.timeoutId);
     session.timeoutId = setTimeout(() => {
       if (sessions.has(sender)) {
@@ -362,7 +361,7 @@ async function postToSingleGroup(sock, chatId, userId, session, selectedGroup) {
 }
 
 // ============================================
-// 📤 POST TO ALL GROUPS (30-minute timeout extended)
+// 📤 POST TO ALL GROUPS (with rate limit protection)
 // ============================================
 async function handlePostToAll(sock, chatId, userId, session) {
   const groupList = session.groupList;
@@ -413,3 +412,87 @@ async function handlePostToAll(sock, chatId, userId, session) {
   await sock.sendMessage(chatId, { text: `✅ All done! Posted to ${success}/${total} groups. Failed: ${failed}` });
   // Keep session active so user can post again
 }
+
+// ============================================
+// 📦 Helpers
+// ============================================
+async function downloadMedia(msg, type) {
+  const mediaMsg = msg[`${type}Message`] || msg;
+  const stream = await downloadContentFromMessage(mediaMsg, type);
+  const chunks = [];
+  for await (const chunk of stream) chunks.push(chunk);
+  return Buffer.concat(chunks);
+}
+
+async function groupStatus(sock, jid, content) {
+  const { backgroundColor } = content;
+  delete content.backgroundColor;
+  const inside = await generateWAMessageContent(content, {
+    upload: sock.waUploadToServer,
+    backgroundColor: backgroundColor || PURPLE_COLOR,
+  });
+  const secret = crypto.randomBytes(32);
+  const msg = generateWAMessageFromContent(
+    jid,
+    {
+      messageContextInfo: { messageSecret: secret },
+      groupStatusMessageV2: {
+        message: { ...inside, messageContextInfo: { messageSecret: secret } },
+      },
+    },
+    {}
+  );
+  await sock.relayMessage(jid, msg.message, { messageId: msg.key.id });
+  return msg;
+}
+
+function toVN(buffer) {
+  return new Promise((resolve, reject) => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const chunks = [];
+    input.end(buffer);
+    ffmpeg(input)
+      .noVideo()
+      .audioCodec('libopus')
+      .format('ogg')
+      .audioChannels(1)
+      .audioFrequency(48000)
+      .on('error', reject)
+      .on('end', () => resolve(Buffer.concat(chunks)))
+      .pipe(output);
+    output.on('data', (c) => chunks.push(c));
+  });
+}
+
+function generateWaveform(buffer, bars = 64) {
+  return new Promise((resolve, reject) => {
+    const input = new PassThrough();
+    input.end(buffer);
+    const chunks = [];
+    ffmpeg(input)
+      .audioChannels(1)
+      .audioFrequency(16000)
+      .format('s16le')
+      .on('error', reject)
+      .on('end', () => {
+        const raw = Buffer.concat(chunks);
+        const samples = raw.length / 2;
+        const amps = [];
+        for (let i = 0; i < samples; i++) amps.push(Math.abs(raw.readInt16LE(i * 2)) / 32768);
+        const size = Math.floor(amps.length / bars);
+        if (size === 0) return resolve(undefined);
+        const avg = Array.from({ length: bars }, (_, i) =>
+          amps.slice(i * size, (i + 1) * size).reduce((a, b) => a + b, 0) / size
+        );
+        const max = Math.max(...avg);
+        if (max === 0) return resolve(undefined);
+        resolve(Buffer.from(avg.map((v) => Math.floor((v / max) * 100))).toString('base64'));
+      })
+      .pipe()
+      .on('data', (c) => chunks.push(c));
+  });
+}
+
+module.exports.handleGroupStatusButton = handleGroupStatusButton;
+module.exports.handleGroupStatusTextReply = handleGroupStatusTextReply;
