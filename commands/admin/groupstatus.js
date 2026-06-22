@@ -145,7 +145,7 @@ module.exports = {
 };
 
 // ============================================
-// 📋 Send Group List with Buttons
+// 📋 Send Group List with "ALL" Option
 // ============================================
 async function sendGroupList(sock, chatId, userId) {
   try {
@@ -162,20 +162,22 @@ async function sendGroupList(sock, chatId, userId) {
 
     const session = sessions.get(userId);
     if (session) {
+      // Clear any old timeout
+      if (session.timeoutId) clearTimeout(session.timeoutId);
       session.page = 0;
       session.totalPages = totalPages;
       session.groupList = groupList;
+      
+      // ⏱️ Default timeout: 5 minutes (for single group selection)
+      session.timeoutId = setTimeout(() => {
+        if (sessions.has(userId)) {
+          sessions.delete(userId);
+          sock.sendMessage(chatId, { text: '⏱️ Session expired. Send .groupstatus again.' }).catch(() => {});
+        }
+      }, 300000);
     }
 
     await sendPage(sock, chatId, userId, 0);
-
-    // ⏱️ SESSION TIMEOUT: 5 MINUTES (300 seconds)
-    setTimeout(() => {
-      if (sessions.has(userId)) {
-        sessions.delete(userId);
-        sock.sendMessage(chatId, { text: '⏱️ Session expired. Send .groupstatus again.' }).catch(() => {});
-      }
-    }, 300000); // 5 minutes
 
   } catch (error) {
     console.error('sendGroupList error:', error);
@@ -198,6 +200,8 @@ async function sendPage(sock, chatId, userId, pageNum) {
   groupList.forEach((g, i) => {
     numberedList += `  ${i+1}. ${g.subject || 'Unnamed'}\n`;
   });
+  // ✅ ADD "ALL" OPTION AT THE END
+  numberedList += `\n  *0. ALL GROUPS (post to all)* 🚀`;
 
   const buttons = [];
   for (const g of pageGroups) {
@@ -208,6 +212,13 @@ async function sendPage(sock, chatId, userId, pageNum) {
       type: 1
     });
   }
+
+  // ✅ ADD "ALL" BUTTON
+  buttons.push({
+    buttonId: 'gstatus_all',
+    buttonText: { displayText: '🚀 ALL GROUPS' },
+    type: 1
+  });
 
   if (totalPages > 1) {
     if (pageNum > 0) buttons.push({ buttonId: `gstatus_page_${pageNum - 1}`, buttonText: { displayText: '◀ Prev' }, type: 1 });
@@ -248,6 +259,21 @@ async function handleGroupStatusButton(sock, msg) {
     return true;
   }
 
+  // ✅ ALL GROUPS BUTTON
+  if (buttonId === 'gstatus_all') {
+    // 🔥 FIX: Extend session timeout to 30 minutes for ALL operation
+    if (session.timeoutId) clearTimeout(session.timeoutId);
+    session.timeoutId = setTimeout(() => {
+      if (sessions.has(sender)) {
+        sessions.delete(sender);
+        sock.sendMessage(from, { text: '⏱️ Session expired. Send .groupstatus again.' }).catch(() => {});
+      }
+    }, 1800000); // 30 minutes
+
+    await handlePostToAll(sock, from, sender, session);
+    return true;
+  }
+
   if (buttonId.startsWith('gstatus_page_')) {
     const pageNum = parseInt(buttonId.replace('gstatus_page_', ''));
     if (!isNaN(pageNum) && session.groupList) {
@@ -264,29 +290,12 @@ async function handleGroupStatusButton(sock, msg) {
     return true;
   }
 
-  try {
-    await sock.sendMessage(from, { text: `⏳ Posting to *${selectedGroup.subject}*...` });
-    let content = {};
-    if (session.type === 'text') content = { text: session.content, backgroundColor: PURPLE_COLOR };
-    else if (session.type === 'image') content = { image: session.content, caption: session.caption || '' };
-    else if (session.type === 'video') content = { video: session.content, caption: session.caption || '' };
-    else if (session.type === 'audio') {
-      let vn = session.content;
-      try { vn = await toVN(session.content); } catch {}
-      let waveform; try { waveform = await generateWaveform(session.content); } catch {}
-      content = { audio: vn, mimetype: 'audio/ogg; codecs=opus', ptt: true, waveform };
-    }
-    await groupStatus(sock, groupId, content);
-    await sock.sendMessage(from, { text: `✅ Status posted to *${selectedGroup.subject}*` });
-  } catch (error) {
-    console.error('PostStatus Error:', error);
-    await sock.sendMessage(from, { text: `❌ Failed in ${selectedGroup.subject}: ${error.message}` });
-  }
+  await postToSingleGroup(sock, from, sender, session, selectedGroup);
   return true;
 }
 
 // ============================================
-// 🔢 Handle Text Number Replies (1, 2, 3...)
+// 🔢 Handle Text Number Replies
 // ============================================
 async function handleGroupStatusTextReply(sock, msg) {
   const from = msg.key.remoteJid;
@@ -295,7 +304,7 @@ async function handleGroupStatusTextReply(sock, msg) {
   if (!text) return false;
 
   const num = parseInt(text.trim());
-  if (isNaN(num) || num < 1 || num > 99) return false;
+  if (isNaN(num) || num < 0 || num > 99) return false;
 
   const session = sessions.get(sender);
   if (!session) return false;
@@ -303,14 +312,37 @@ async function handleGroupStatusTextReply(sock, msg) {
   const groupList = session.groupList;
   if (!groupList || groupList.length === 0) return false;
 
+  // ✅ ALL GROUPS (number 0)
+  if (num === 0) {
+    // 🔥 FIX: Extend session timeout to 30 minutes for ALL operation
+    if (session.timeoutId) clearTimeout(session.timeoutId);
+    session.timeoutId = setTimeout(() => {
+      if (sessions.has(sender)) {
+        sessions.delete(sender);
+        sock.sendMessage(from, { text: '⏱️ Session expired. Send .groupstatus again.' }).catch(() => {});
+      }
+    }, 1800000); // 30 minutes
+
+    await handlePostToAll(sock, from, sender, session);
+    return true;
+  }
+
   if (num < 1 || num > groupList.length) {
-    await sock.sendMessage(from, { text: `❌ Invalid number. Choose between 1 and ${groupList.length}.` });
+    await sock.sendMessage(from, { text: `❌ Invalid number. Choose between 1 and ${groupList.length} (or 0 for ALL).` });
     return true;
   }
 
   const selectedGroup = groupList[num - 1];
+  await postToSingleGroup(sock, from, sender, session, selectedGroup);
+  return true;
+}
+
+// ============================================
+// 📤 Post to Single Group
+// ============================================
+async function postToSingleGroup(sock, chatId, userId, session, selectedGroup) {
   try {
-    await sock.sendMessage(from, { text: `⏳ Posting to *${selectedGroup.subject}*...` });
+    await sock.sendMessage(chatId, { text: `⏳ Posting to *${selectedGroup.subject}*...` });
     let content = {};
     if (session.type === 'text') content = { text: session.content, backgroundColor: PURPLE_COLOR };
     else if (session.type === 'image') content = { image: session.content, caption: session.caption || '' };
@@ -322,94 +354,62 @@ async function handleGroupStatusTextReply(sock, msg) {
       content = { audio: vn, mimetype: 'audio/ogg; codecs=opus', ptt: true, waveform };
     }
     await groupStatus(sock, selectedGroup.id, content);
-    await sock.sendMessage(from, { text: `✅ Status posted to *${selectedGroup.subject}*` });
+    await sock.sendMessage(chatId, { text: `✅ Status posted to *${selectedGroup.subject}*` });
   } catch (error) {
     console.error('PostStatus Error:', error);
-    await sock.sendMessage(from, { text: `❌ Failed in ${selectedGroup.subject}: ${error.message}` });
+    await sock.sendMessage(chatId, { text: `❌ Failed in ${selectedGroup.subject}: ${error.message}` });
   }
-  return true;
 }
 
 // ============================================
-// 📦 Helpers
+// 📤 POST TO ALL GROUPS (30-minute timeout extended)
 // ============================================
-async function downloadMedia(msg, type) {
-  const mediaMsg = msg[`${type}Message`] || msg;
-  const stream = await downloadContentFromMessage(mediaMsg, type);
-  const chunks = [];
-  for await (const chunk of stream) chunks.push(chunk);
-  return Buffer.concat(chunks);
-}
+async function handlePostToAll(sock, chatId, userId, session) {
+  const groupList = session.groupList;
+  if (!groupList || groupList.length === 0) {
+    await sock.sendMessage(chatId, { text: '❌ No groups found.' });
+    return;
+  }
 
-async function groupStatus(sock, jid, content) {
-  const { backgroundColor } = content;
-  delete content.backgroundColor;
-  const inside = await generateWAMessageContent(content, {
-    upload: sock.waUploadToServer,
-    backgroundColor: backgroundColor || PURPLE_COLOR,
-  });
-  const secret = crypto.randomBytes(32);
-  const msg = generateWAMessageFromContent(
-    jid,
-    {
-      messageContextInfo: { messageSecret: secret },
-      groupStatusMessageV2: {
-        message: { ...inside, messageContextInfo: { messageSecret: secret } },
-      },
-    },
-    {}
-  );
-  await sock.relayMessage(jid, msg.message, { messageId: msg.key.id });
-  return msg;
-}
+  await sock.sendMessage(chatId, { text: `🚀 Starting to post to all ${groupList.length} groups...\n⏳ This may take several minutes. Session is extended to 30 mins.` });
 
-function toVN(buffer) {
-  return new Promise((resolve, reject) => {
-    const input = new PassThrough();
-    const output = new PassThrough();
-    const chunks = [];
-    input.end(buffer);
-    ffmpeg(input)
-      .noVideo()
-      .audioCodec('libopus')
-      .format('ogg')
-      .audioChannels(1)
-      .audioFrequency(48000)
-      .on('error', reject)
-      .on('end', () => resolve(Buffer.concat(chunks)))
-      .pipe(output);
-    output.on('data', (c) => chunks.push(c));
-  });
-}
+  let success = 0;
+  let failed = 0;
+  const total = groupList.length;
 
-function generateWaveform(buffer, bars = 64) {
-  return new Promise((resolve, reject) => {
-    const input = new PassThrough();
-    input.end(buffer);
-    const chunks = [];
-    ffmpeg(input)
-      .audioChannels(1)
-      .audioFrequency(16000)
-      .format('s16le')
-      .on('error', reject)
-      .on('end', () => {
-        const raw = Buffer.concat(chunks);
-        const samples = raw.length / 2;
-        const amps = [];
-        for (let i = 0; i < samples; i++) amps.push(Math.abs(raw.readInt16LE(i * 2)) / 32768);
-        const size = Math.floor(amps.length / bars);
-        if (size === 0) return resolve(undefined);
-        const avg = Array.from({ length: bars }, (_, i) =>
-          amps.slice(i * size, (i + 1) * size).reduce((a, b) => a + b, 0) / size
-        );
-        const max = Math.max(...avg);
-        if (max === 0) return resolve(undefined);
-        resolve(Buffer.from(avg.map((v) => Math.floor((v / max) * 100))).toString('base64'));
-      })
-      .pipe()
-      .on('data', (c) => chunks.push(c));
-  });
-}
+  for (let i = 0; i < total; i++) {
+    const g = groupList[i];
+    try {
+      let content = {};
+      if (session.type === 'text') content = { text: session.content, backgroundColor: PURPLE_COLOR };
+      else if (session.type === 'image') content = { image: session.content, caption: session.caption || '' };
+      else if (session.type === 'video') content = { video: session.content, caption: session.caption || '' };
+      else if (session.type === 'audio') {
+        let vn = session.content;
+        try { vn = await toVN(session.content); } catch {}
+        let waveform; try { waveform = await generateWaveform(session.content); } catch {}
+        content = { audio: vn, mimetype: 'audio/ogg; codecs=opus', ptt: true, waveform };
+      }
+      await groupStatus(sock, g.id, content);
+      success++;
+      console.log(`✅ ${success}/${total} posted to ${g.subject}`);
+    } catch (error) {
+      failed++;
+      console.error(`❌ Failed to post to ${g.subject}:`, error.message);
+    }
 
-module.exports.handleGroupStatusButton = handleGroupStatusButton;
-module.exports.handleGroupStatusTextReply = handleGroupStatusTextReply;
+    // ✅ RATE LIMIT PROTECTION – wait 3-5 seconds between groups
+    if (i < total - 1) {
+      const delay = 3000 + Math.floor(Math.random() * 3000);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+
+    // ✅ Send progress update every 10 groups
+    if ((i + 1) % 10 === 0 || i === total - 1) {
+      await sock.sendMessage(chatId, { text: `📊 Progress: ${success + failed}/${total} done (✅ ${success} | ❌ ${failed})` });
+    }
+  }
+
+  await sock.sendMessage(chatId, { text: `✅ All done! Posted to ${success}/${total} groups. Failed: ${failed}` });
+  // Keep session active so user can post again
+}
