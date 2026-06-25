@@ -29,7 +29,6 @@ module.exports = {
       const ctxInfo = msg.message?.extendedTextMessage?.contextInfo;
       const hasQuoted = !!ctxInfo?.quotedMessage;
 
-      // ---------- PRIVATE CHAT ----------
       if (!isGroup) {
         if (!hasQuoted) {
           if (!caption) {
@@ -39,8 +38,10 @@ module.exports = {
               '  `.groupstatus [optional caption]`\n' +
               '• Or send text status only:\n' +
               '  `.groupstatus Your text here`\n\n' +
-              'After that, bot will ask which group to post in.\n' +
-              'Text statuses use a single purple background color by default.'
+              '⚠️ *SAFE MODE:*\n' +
+              '• To post to ALL groups, reply with `0`\n' +
+              '• 28 sec delay between groups to avoid ban\n' +
+              '• Each group gets status ONLY ONCE per command'
             );
           }
 
@@ -49,7 +50,6 @@ module.exports = {
           return;
         }
 
-        // Private chat + media reply
         const targetMessage = {
           key: { remoteJid: from, id: ctxInfo.stanzaId, participant: ctxInfo.participant },
           message: ctxInfo.quotedMessage,
@@ -77,7 +77,7 @@ module.exports = {
         return;
       }
 
-      // ---------- GROUP CHAT (existing logic) ----------
+      // ---------- GROUP CHAT ----------
       if (!hasQuoted) {
         if (!caption) {
           return extra.reply(
@@ -98,7 +98,6 @@ module.exports = {
         }
       }
 
-      // Quoted media in group (existing logic)
       const targetMessage = {
         key: { remoteJid: from, id: ctxInfo.stanzaId, participant: ctxInfo.participant },
         message: ctxInfo.quotedMessage,
@@ -162,19 +161,18 @@ async function sendGroupList(sock, chatId, userId) {
 
     const session = sessions.get(userId);
     if (session) {
-      // Clear old timeout if any
       if (session.timeoutId) clearTimeout(session.timeoutId);
       session.page = 0;
       session.totalPages = totalPages;
       session.groupList = groupList;
       
-      // ⏱️ Default timeout: 5 minutes (for single group selection)
+      // ✅ 2 HOURS TIMEOUT (7200 seconds)
       session.timeoutId = setTimeout(() => {
         if (sessions.has(userId)) {
           sessions.delete(userId);
           sock.sendMessage(chatId, { text: '⏱️ Session expired. Send .groupstatus again.' }).catch(() => {});
         }
-      }, 300000);
+      }, 7200000); // 2 hours
     }
 
     await sendPage(sock, chatId, userId, 0);
@@ -195,7 +193,6 @@ async function sendPage(sock, chatId, userId, pageNum) {
   const end = Math.min(start + perPage, groupList.length);
   const pageGroups = groupList.slice(start, end);
 
-  // Build numbered list for text reply (including 0 for ALL)
   let numberedList = '\n📋 *Group List (reply with number):*\n\n';
   groupList.forEach((g, i) => {
     numberedList += `  ${i+1}. ${g.subject || 'Unnamed'}\n`;
@@ -212,7 +209,6 @@ async function sendPage(sock, chatId, userId, pageNum) {
     });
   }
 
-  // ✅ ADD "ALL" BUTTON
   buttons.push({
     buttonId: 'gstatus_all',
     buttonText: { displayText: '🚀 ALL GROUPS' },
@@ -236,7 +232,7 @@ async function sendPage(sock, chatId, userId, pageNum) {
 }
 
 // ============================================
-// 🔘 Handle Button Clicks (with ALL support)
+// 🔘 Handle Button Clicks
 // ============================================
 async function handleGroupStatusButton(sock, msg) {
   const buttonMsg = msg.message?.buttonsResponseMessage;
@@ -258,16 +254,14 @@ async function handleGroupStatusButton(sock, msg) {
     return true;
   }
 
-  // ✅ ALL GROUPS BUTTON
   if (buttonId === 'gstatus_all') {
-    // Extend session timeout to 30 minutes for ALL operation
     if (session.timeoutId) clearTimeout(session.timeoutId);
     session.timeoutId = setTimeout(() => {
       if (sessions.has(sender)) {
         sessions.delete(sender);
         sock.sendMessage(from, { text: '⏱️ Session expired. Send .groupstatus again.' }).catch(() => {});
       }
-    }, 1800000); // 30 minutes
+    }, 7200000); // 2 hours
 
     await handlePostToAll(sock, from, sender, session);
     return true;
@@ -294,7 +288,7 @@ async function handleGroupStatusButton(sock, msg) {
 }
 
 // ============================================
-// 🔢 Handle Text Number Replies (with ALL support)
+// 🔢 Handle Text Number Replies
 // ============================================
 async function handleGroupStatusTextReply(sock, msg) {
   const from = msg.key.remoteJid;
@@ -311,16 +305,14 @@ async function handleGroupStatusTextReply(sock, msg) {
   const groupList = session.groupList;
   if (!groupList || groupList.length === 0) return false;
 
-  // ✅ ALL GROUPS (number 0)
   if (num === 0) {
-    // Extend session timeout to 30 minutes for ALL operation
     if (session.timeoutId) clearTimeout(session.timeoutId);
     session.timeoutId = setTimeout(() => {
       if (sessions.has(sender)) {
         sessions.delete(sender);
         sock.sendMessage(from, { text: '⏱️ Session expired. Send .groupstatus again.' }).catch(() => {});
       }
-    }, 1800000); // 30 minutes
+    }, 7200000); // 2 hours
 
     await handlePostToAll(sock, from, sender, session);
     return true;
@@ -361,7 +353,7 @@ async function postToSingleGroup(sock, chatId, userId, session, selectedGroup) {
 }
 
 // ============================================
-// 📤 POST TO ALL GROUPS (with rate limit protection)
+// 📤 POST TO ALL GROUPS (28 sec delay, NO duplicates)
 // ============================================
 async function handlePostToAll(sock, chatId, userId, session) {
   const groupList = session.groupList;
@@ -370,14 +362,28 @@ async function handlePostToAll(sock, chatId, userId, session) {
     return;
   }
 
-  await sock.sendMessage(chatId, { text: `🚀 Starting to post to all ${groupList.length} groups...\n⏳ This may take several minutes. Session is extended to 30 mins.` });
+  // ✅ Check if already posted this session
+  if (session._allPosted) {
+    await sock.sendMessage(chatId, { text: '⚠️ Already posted to all groups in this session. Send .groupstatus again to refresh.' });
+    return;
+  }
+
+  const total = groupList.length;
+  await sock.sendMessage(chatId, { text: `🚀 Posting to all ${total} groups...\n⏳ 28 sec delay between groups.` });
 
   let success = 0;
   let failed = 0;
-  const total = groupList.length;
+  const postedGroups = new Set(); // ✅ Track posted groups to avoid duplicates
 
   for (let i = 0; i < total; i++) {
     const g = groupList[i];
+    
+    // ✅ Skip if already posted in this session
+    if (postedGroups.has(g.id)) {
+      console.log(`⏭️ Skipping duplicate: ${g.subject}`);
+      continue;
+    }
+
     try {
       let content = {};
       if (session.type === 'text') content = { text: session.content, backgroundColor: PURPLE_COLOR };
@@ -391,26 +397,33 @@ async function handlePostToAll(sock, chatId, userId, session) {
       }
       await groupStatus(sock, g.id, content);
       success++;
+      postedGroups.add(g.id); // ✅ Mark as posted
       console.log(`✅ ${success}/${total} posted to ${g.subject}`);
     } catch (error) {
       failed++;
       console.error(`❌ Failed to post to ${g.subject}:`, error.message);
     }
 
-    // ✅ RATE LIMIT PROTECTION – wait 3-5 seconds between groups
+    // ✅ 28 SECONDS DELAY
     if (i < total - 1) {
-      const delay = 3000 + Math.floor(Math.random() * 3000);
-      await new Promise(resolve => setTimeout(resolve, delay));
+      await new Promise(resolve => setTimeout(resolve, 28000)); // 28 seconds
     }
 
-    // ✅ Send progress update every 10 groups
-    if ((i + 1) % 10 === 0 || i === total - 1) {
+    // ✅ Progress update every 5 groups
+    if ((i + 1) % 5 === 0 || i === total - 1) {
       await sock.sendMessage(chatId, { text: `📊 Progress: ${success + failed}/${total} done (✅ ${success} | ❌ ${failed})` });
+    }
+
+    // ✅ Every 15 groups, 2 minute break
+    if ((i + 1) % 15 === 0 && i < total - 1) {
+      await sock.sendMessage(chatId, { text: `⏸️ Break for 2 minutes (${i+1}/${total} done)...` });
+      await new Promise(resolve => setTimeout(resolve, 120000)); // 2 min
     }
   }
 
+  // ✅ Mark session as completed
+  session._allPosted = true;
   await sock.sendMessage(chatId, { text: `✅ All done! Posted to ${success}/${total} groups. Failed: ${failed}` });
-  // Keep session active so user can post again
 }
 
 // ============================================
