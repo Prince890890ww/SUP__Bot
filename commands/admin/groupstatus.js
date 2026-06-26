@@ -7,13 +7,46 @@ const {
 const { PassThrough } = require('stream');
 const ffmpeg = require('fluent-ffmpeg');
 
-const PURPLE_COLOR = '#9C27B0';
+// ============================================
+// 🎨 RANDOM COLOR LIST (20+ Colors)
+// ============================================
+const COLORS = [
+  '#FF0000', // Red
+  '#FF5722', // Deep Orange
+  '#FF9800', // Orange
+  '#FFEB3B', // Yellow
+  '#4CAF50', // Green
+  '#00BCD4', // Cyan
+  '#2196F3', // Blue
+  '#3F51B5', // Indigo
+  '#673AB7', // Deep Purple
+  '#9C27B0', // Purple
+  '#E91E63', // Pink
+  '#FF4081', // Light Pink
+  '#7C4DFF', // Light Purple
+  '#00E5FF', // Light Blue
+  '#FFEA00', // Light Yellow
+  '#76FF03', // Light Green
+  '#FF6F00', // Amber
+  '#D50000', // Dark Red
+  '#0D47A1', // Dark Blue
+  '#004D40', // Dark Teal
+  '#880E4F', // Dark Pink
+  '#4A148C', // Dark Purple
+  '#1A237E', // Dark Indigo
+  '#BF360C', // Dark Orange
+];
+
+function getRandomColor() {
+  return COLORS[Math.floor(Math.random() * COLORS.length)];
+}
+
 const sessions = new Map();
 
 module.exports = {
   name: 'groupstatus',
   aliases: ['togstatus', 'swgc', 'gs', 'gstatus'],
-  description: 'Post replied media or text as a WhatsApp group status (new Group Status feature).',
+  description: 'Post replied media or text as a WhatsApp group status (ALL groups supported).',
   usage: '.groupstatus [caption]  (reply to image/video/audio) OR .groupstatus your text',
   category: 'admin',
   groupOnly: false,
@@ -38,10 +71,9 @@ module.exports = {
               '  `.groupstatus [optional caption]`\n' +
               '• Or send text status only:\n' +
               '  `.groupstatus Your text here`\n\n' +
-              '⚠️ *SAFE MODE:*\n' +
-              '• To post to ALL groups, reply with `0`\n' +
-              '• 28 sec delay between groups to avoid ban\n' +
-              '• Each group gets status ONLY ONCE per command'
+              '🎨 *Random background color every time!*\n' +
+              '• 0 = ALL groups (45 sec delay, 3 min break)\n' +
+              '• WhatsApp crash-proof version'
             );
           }
 
@@ -86,12 +118,13 @@ module.exports = {
             '  `.groupstatus [optional caption]`\n' +
             '• Or send text status only:\n' +
             '  `.groupstatus Your text here`\n\n' +
-            'Text statuses use a single purple background color by default.'
+            '🎨 Random background color every time!'
           );
         }
         await extra.reply('⏳ Posting text group status...');
         try {
-          await groupStatus(sock, from, { text: caption, backgroundColor: PURPLE_COLOR });
+          // 🎨 Random color for this status
+          await groupStatus(sock, from, { text: caption, backgroundColor: getRandomColor() });
           return extra.reply('✅ Text group status posted!');
         } catch (e) {
           return extra.reply('❌ Failed to post text group status: ' + (e.message || e));
@@ -116,14 +149,14 @@ module.exports = {
         await extra.reply('⏳ Posting image group status...');
         let buf; try { buf = await downloadBuf(); } catch { return extra.reply('❌ Failed to download image'); }
         if (!buf) return extra.reply('❌ Could not download image');
-        try { await groupStatus(sock, from, { image: buf, caption: caption || '' }); return extra.reply('✅ Image group status posted!'); } catch (e) { return extra.reply('❌ Failed to post image group status: ' + (e.message || e)); }
+        try { await groupStatus(sock, from, { image: buf, caption: caption || '', backgroundColor: getRandomColor() }); return extra.reply('✅ Image group status posted!'); } catch (e) { return extra.reply('❌ Failed to post image group status: ' + (e.message || e)); }
       }
 
       if (/video/i.test(mtype)) {
         await extra.reply('⏳ Posting video group status...');
         let buf; try { buf = await downloadBuf(); } catch { return extra.reply('❌ Failed to download video'); }
         if (!buf) return extra.reply('❌ Could not download video');
-        try { await groupStatus(sock, from, { video: buf, caption: caption || '' }); return extra.reply('✅ Video group status posted!'); } catch (e) { return extra.reply('❌ Failed to post video group status: ' + (e.message || e)); }
+        try { await groupStatus(sock, from, { video: buf, caption: caption || '', backgroundColor: getRandomColor() }); return extra.reply('✅ Video group status posted!'); } catch (e) { return extra.reply('❌ Failed to post video group status: ' + (e.message || e)); }
       }
 
       if (/audio/i.test(mtype)) {
@@ -132,7 +165,7 @@ module.exports = {
         if (!buf) return extra.reply('❌ Could not download audio');
         let vn; try { vn = await toVN(buf); } catch { vn = buf; }
         let waveform; try { waveform = await generateWaveform(buf); } catch { waveform = undefined; }
-        try { await groupStatus(sock, from, { audio: vn, mimetype: 'audio/ogg; codecs=opus', ptt: true, waveform }); return extra.reply('✅ Audio group status posted!'); } catch (e) { return extra.reply('❌ Failed to post audio group status: ' + (e.message || e)); }
+        try { await groupStatus(sock, from, { audio: vn, mimetype: 'audio/ogg; codecs=opus', ptt: true, waveform, backgroundColor: getRandomColor() }); return extra.reply('✅ Audio group status posted!'); } catch (e) { return extra.reply('❌ Failed to post audio group status: ' + (e.message || e)); }
       }
 
       return extra.reply('❌ Unsupported media type. Reply to an image, video, or audio.');
@@ -166,13 +199,13 @@ async function sendGroupList(sock, chatId, userId) {
       session.totalPages = totalPages;
       session.groupList = groupList;
       
-      // ✅ 2 HOURS TIMEOUT (7200 seconds)
+      // 2 hours timeout (7200 seconds)
       session.timeoutId = setTimeout(() => {
         if (sessions.has(userId)) {
           sessions.delete(userId);
           sock.sendMessage(chatId, { text: '⏱️ Session expired. Send .groupstatus again.' }).catch(() => {});
         }
-      }, 7200000); // 2 hours
+      }, 7200000);
     }
 
     await sendPage(sock, chatId, userId, 0);
@@ -261,7 +294,7 @@ async function handleGroupStatusButton(sock, msg) {
         sessions.delete(sender);
         sock.sendMessage(from, { text: '⏱️ Session expired. Send .groupstatus again.' }).catch(() => {});
       }
-    }, 7200000); // 2 hours
+    }, 7200000);
 
     await handlePostToAll(sock, from, sender, session);
     return true;
@@ -312,7 +345,7 @@ async function handleGroupStatusTextReply(sock, msg) {
         sessions.delete(sender);
         sock.sendMessage(from, { text: '⏱️ Session expired. Send .groupstatus again.' }).catch(() => {});
       }
-    }, 7200000); // 2 hours
+    }, 7200000);
 
     await handlePostToAll(sock, from, sender, session);
     return true;
@@ -335,14 +368,14 @@ async function postToSingleGroup(sock, chatId, userId, session, selectedGroup) {
   try {
     await sock.sendMessage(chatId, { text: `⏳ Posting to *${selectedGroup.subject}*...` });
     let content = {};
-    if (session.type === 'text') content = { text: session.content, backgroundColor: PURPLE_COLOR };
-    else if (session.type === 'image') content = { image: session.content, caption: session.caption || '' };
-    else if (session.type === 'video') content = { video: session.content, caption: session.caption || '' };
+    if (session.type === 'text') content = { text: session.content, backgroundColor: getRandomColor() };
+    else if (session.type === 'image') content = { image: session.content, caption: session.caption || '', backgroundColor: getRandomColor() };
+    else if (session.type === 'video') content = { video: session.content, caption: session.caption || '', backgroundColor: getRandomColor() };
     else if (session.type === 'audio') {
       let vn = session.content;
       try { vn = await toVN(session.content); } catch {}
       let waveform; try { waveform = await generateWaveform(session.content); } catch {}
-      content = { audio: vn, mimetype: 'audio/ogg; codecs=opus', ptt: true, waveform };
+      content = { audio: vn, mimetype: 'audio/ogg; codecs=opus', ptt: true, waveform, backgroundColor: getRandomColor() };
     }
     await groupStatus(sock, selectedGroup.id, content);
     await sock.sendMessage(chatId, { text: `✅ Status posted to *${selectedGroup.subject}*` });
@@ -353,7 +386,7 @@ async function postToSingleGroup(sock, chatId, userId, session, selectedGroup) {
 }
 
 // ============================================
-// 📤 POST TO ALL GROUPS (28 sec delay, NO duplicates)
+// 📤 POST TO ALL GROUPS (45 sec delay, 3 min break)
 // ============================================
 async function handlePostToAll(sock, chatId, userId, session) {
   const groupList = session.groupList;
@@ -362,23 +395,21 @@ async function handlePostToAll(sock, chatId, userId, session) {
     return;
   }
 
-  // ✅ Check if already posted this session
   if (session._allPosted) {
     await sock.sendMessage(chatId, { text: '⚠️ Already posted to all groups in this session. Send .groupstatus again to refresh.' });
     return;
   }
 
   const total = groupList.length;
-  await sock.sendMessage(chatId, { text: `🚀 Posting to all ${total} groups...\n⏳ 28 sec delay between groups.` });
+  await sock.sendMessage(chatId, { text: `🚀 Posting to all ${total} groups...\n⏳ 45 sec delay between groups.` });
 
   let success = 0;
   let failed = 0;
-  const postedGroups = new Set(); // ✅ Track posted groups to avoid duplicates
+  const postedGroups = new Set();
 
   for (let i = 0; i < total; i++) {
     const g = groupList[i];
     
-    // ✅ Skip if already posted in this session
     if (postedGroups.has(g.id)) {
       console.log(`⏭️ Skipping duplicate: ${g.subject}`);
       continue;
@@ -386,42 +417,42 @@ async function handlePostToAll(sock, chatId, userId, session) {
 
     try {
       let content = {};
-      if (session.type === 'text') content = { text: session.content, backgroundColor: PURPLE_COLOR };
-      else if (session.type === 'image') content = { image: session.content, caption: session.caption || '' };
-      else if (session.type === 'video') content = { video: session.content, caption: session.caption || '' };
+      const color = getRandomColor(); // 🎨 Random color for each group
+      if (session.type === 'text') content = { text: session.content, backgroundColor: color };
+      else if (session.type === 'image') content = { image: session.content, caption: session.caption || '', backgroundColor: color };
+      else if (session.type === 'video') content = { video: session.content, caption: session.caption || '', backgroundColor: color };
       else if (session.type === 'audio') {
         let vn = session.content;
         try { vn = await toVN(session.content); } catch {}
         let waveform; try { waveform = await generateWaveform(session.content); } catch {}
-        content = { audio: vn, mimetype: 'audio/ogg; codecs=opus', ptt: true, waveform };
+        content = { audio: vn, mimetype: 'audio/ogg; codecs=opus', ptt: true, waveform, backgroundColor: color };
       }
       await groupStatus(sock, g.id, content);
       success++;
-      postedGroups.add(g.id); // ✅ Mark as posted
-      console.log(`✅ ${success}/${total} posted to ${g.subject}`);
+      postedGroups.add(g.id);
+      console.log(`✅ ${success}/${total} posted to ${g.subject} (color: ${color})`);
     } catch (error) {
       failed++;
       console.error(`❌ Failed to post to ${g.subject}:`, error.message);
     }
 
-    // ✅ 28 SECONDS DELAY
+    // 45 SECONDS DELAY
     if (i < total - 1) {
-      await new Promise(resolve => setTimeout(resolve, 28000)); // 28 seconds
+      await new Promise(resolve => setTimeout(resolve, 45000));
     }
 
-    // ✅ Progress update every 5 groups
+    // Progress update every 5 groups
     if ((i + 1) % 5 === 0 || i === total - 1) {
       await sock.sendMessage(chatId, { text: `📊 Progress: ${success + failed}/${total} done (✅ ${success} | ❌ ${failed})` });
     }
 
-    // ✅ Every 15 groups, 2 minute break
+    // 3 MIN BREAK after every 15 groups
     if ((i + 1) % 15 === 0 && i < total - 1) {
-      await sock.sendMessage(chatId, { text: `⏸️ Break for 2 minutes (${i+1}/${total} done)...` });
-      await new Promise(resolve => setTimeout(resolve, 120000)); // 2 min
+      await sock.sendMessage(chatId, { text: `⏸️ Break for 3 minutes (${i+1}/${total} done)...` });
+      await new Promise(resolve => setTimeout(resolve, 180000));
     }
   }
 
-  // ✅ Mark session as completed
   session._allPosted = true;
   await sock.sendMessage(chatId, { text: `✅ All done! Posted to ${success}/${total} groups. Failed: ${failed}` });
 }
@@ -439,10 +470,12 @@ async function downloadMedia(msg, type) {
 
 async function groupStatus(sock, jid, content) {
   const { backgroundColor } = content;
-  delete content.backgroundColor;
+  // If no backgroundColor provided, pick random
+  const bgColor = backgroundColor || getRandomColor();
+  delete content.backgroundColor; // Remove from content so it doesn't conflict
   const inside = await generateWAMessageContent(content, {
     upload: sock.waUploadToServer,
-    backgroundColor: backgroundColor || PURPLE_COLOR,
+    backgroundColor: bgColor,
   });
   const secret = crypto.randomBytes(32);
   const msg = generateWAMessageFromContent(
